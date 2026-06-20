@@ -23,7 +23,7 @@ interface ExportFilters {
 export default function ExportPreview({ isOpen, onClose }: ExportPreviewProps) {
   const { getGroupedForExport, reviews } = useReviewStore();
   const { issues } = useIssueStore();
-  const { getSelectedProject, buildings, floors, getSelectedBuilding } = useProjectStore();
+  const { projects, buildings, floors } = useProjectStore();
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [exportFormat, setExportFormat] = useState<'excel' | 'pdf'>('excel');
   const [showFilters, setShowFilters] = useState(false);
@@ -35,24 +35,49 @@ export default function ExportPreview({ isOpen, onClose }: ExportPreviewProps) {
     status: 'all',
   });
 
-  const project = getSelectedProject();
-  const selectedBuilding = getSelectedBuilding();
+  const availableBuildings = useMemo(() => {
+    if (filters.projectId !== 'all') {
+      return buildings.filter((b) => b.projectId === filters.projectId);
+    }
+    return buildings;
+  }, [buildings, filters.projectId]);
+
+  const availableFloors = useMemo(() => {
+    if (filters.buildingId !== 'all') {
+      return floors.filter((f) => f.buildingId === filters.buildingId);
+    }
+    if (filters.projectId !== 'all') {
+      const buildingIds = availableBuildings.map((b) => b.id);
+      return floors.filter((f) => buildingIds.includes(f.buildingId));
+    }
+    return floors;
+  }, [floors, filters.buildingId, filters.projectId, availableBuildings]);
 
   const filteredIssues = useMemo(() => {
     return issues.filter((issue) => {
       if (filters.discipline !== 'all' && issue.discipline !== filters.discipline) return false;
       if (filters.status !== 'all' && issue.status !== filters.status) return false;
-      
-      if (filters.floorId !== 'all' && issue.floorId !== filters.floorId) return false;
-      
+
+      if (filters.projectId !== 'all') {
+        const floor = floors.find((f) => f.id === issue.floorId);
+        if (floor) {
+          const building = buildings.find((b) => b.id === floor.buildingId);
+          if (building?.projectId !== filters.projectId) return false;
+        } else {
+          return false;
+        }
+      }
+
       if (filters.buildingId !== 'all') {
         const floor = floors.find((f) => f.id === issue.floorId);
         if (floor?.buildingId !== filters.buildingId) return false;
       }
-      
+
+      if (filters.floorId !== 'all' && issue.floorId !== filters.floorId) return false;
+
       return true;
     });
-  }, [issues, filters, floors]);
+  }, [issues, filters, floors, buildings]);
 
   const stats = useMemo(() => {
     const unconfirmedCount = reviews.filter(
@@ -90,12 +115,12 @@ export default function ExportPreview({ isOpen, onClose }: ExportPreviewProps) {
     });
   };
 
-  const handleExport = () => {
-    const fileName = getExportFileName(project?.name);
+  const handleExport = async () => {
+    const fileName = getExportFileName(filters.projectId !== 'all' ? projects.find((p) => p.id === filters.projectId)?.name : undefined);
     if (exportFormat === 'excel') {
       exportToExcel(groups, fileName, filters, stats);
     } else {
-      exportToPDF(groups, fileName, filters, stats);
+      await exportToPDF(groups, fileName, filters, stats);
     }
     onClose();
   };
@@ -111,13 +136,6 @@ export default function ExportPreview({ isOpen, onClose }: ExportPreviewProps) {
   };
 
   const totalItems = groups.reduce((sum, g) => sum + g.items.length, 0);
-
-  const availableFloors = useMemo(() => {
-    if (filters.buildingId !== 'all') {
-      return floors.filter((f) => f.buildingId === filters.buildingId);
-    }
-    return floors;
-  }, [floors, filters.buildingId]);
 
   if (!isOpen) return null;
 
@@ -189,13 +207,13 @@ export default function ExportPreview({ isOpen, onClose }: ExportPreviewProps) {
             >
               <Filter className="w-4 h-4" />
               筛选条件
-              {(filters.discipline !== 'all' || filters.status !== 'all' || filters.floorId !== 'all' || filters.buildingId !== 'all') && (
+              {(filters.projectId !== 'all' || filters.discipline !== 'all' || filters.status !== 'all' || filters.floorId !== 'all' || filters.buildingId !== 'all') && (
                 <span className="w-5 h-5 bg-primary-600 text-white rounded-full text-xs flex items-center justify-center">
                   {Object.values(filters).filter((v) => v !== 'all').length}
                 </span>
               )}
             </button>
-            {(filters.discipline !== 'all' || filters.status !== 'all' || filters.floorId !== 'all' || filters.buildingId !== 'all') && (
+            {(filters.projectId !== 'all' || filters.discipline !== 'all' || filters.status !== 'all' || filters.floorId !== 'all' || filters.buildingId !== 'all') && (
               <button
                 onClick={resetFilters}
                 className="text-sm text-gray-500 hover:text-gray-700"
@@ -234,18 +252,19 @@ export default function ExportPreview({ isOpen, onClose }: ExportPreviewProps) {
         {showFilters && (
           <div className="px-6 py-4 border-b border-gray-200 bg-gray-50 space-y-4">
             <div className="grid grid-cols-5 gap-4">
-              {project && (
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">项目</label>
-                  <select
-                    value={filters.projectId}
-                    onChange={(e) => setFilters({ ...filters, projectId: e.target.value })}
-                    className="input-field text-sm py-1.5"
-                  >
-                    <option value="all">{project.name}</option>
-                  </select>
-                </div>
-              )}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">项目</label>
+                <select
+                  value={filters.projectId}
+                  onChange={(e) => setFilters({ ...filters, projectId: e.target.value, buildingId: 'all', floorId: 'all' })}
+                  className="input-field text-sm py-1.5"
+                >
+                  <option value="all">全部项目</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">楼栋</label>
                 <select
@@ -254,7 +273,7 @@ export default function ExportPreview({ isOpen, onClose }: ExportPreviewProps) {
                   className="input-field text-sm py-1.5"
                 >
                   <option value="all">全部楼栋</option>
-                  {buildings.map((b) => (
+                  {availableBuildings.map((b) => (
                     <option key={b.id} value={b.id}>{b.name}</option>
                   ))}
                 </select>

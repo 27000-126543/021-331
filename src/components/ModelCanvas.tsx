@@ -5,6 +5,7 @@ import { getDisciplineName, getDisciplineColor } from '@/utils/disciplineColors'
 import { getCollisionTypeColor } from '@/utils/collision';
 import { ModelElement, CollisionPoint } from '@/types';
 import CollisionPanel from './CollisionPanel';
+import CollisionListPanel from './CollisionListPanel';
 import { ZoomIn, ZoomOut, Move, AlertTriangle, Plus, Upload, Scan, Eye, EyeOff } from 'lucide-react';
 
 interface CanvasElementProps {
@@ -280,6 +281,25 @@ export default function ModelCanvas() {
     setSelectedCollision(null);
   };
 
+  const handleBatchCreateIssuesFromCollisions = (elementIds: string[]) => {
+    openForm(elementIds);
+    setSelectedCollision(null);
+  };
+
+  const handleSelectCollisionFromList = (collisionId: string) => {
+    setSelectedCollision(collisionId);
+    const collision = collisions.find((c) => c.id === collisionId);
+    if (collision) {
+      setScale(1);
+      const canvasWidth = containerRef.current?.clientWidth || 800;
+      const canvasHeight = containerRef.current?.clientHeight || 600;
+      setOffset({
+        x: canvasWidth / 2 - collision.position.x - collision.position.width / 2 - 400,
+        y: canvasHeight / 2 - collision.position.y - collision.position.height / 2 - 300,
+      });
+    }
+  };
+
   if (!selectedFloorId) {
     return (
       <div className="model-canvas flex-1 flex items-center justify-center">
@@ -463,6 +483,15 @@ export default function ModelCanvas() {
         <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg px-4 py-2 border border-gray-200 text-xs text-gray-500">
           <p>提示：点击构件查看属性 | 点击碰撞区域查看详情 | Alt+拖动平移视图</p>
         </div>
+
+        {showCollisions && collisions.length > 0 && (
+          <CollisionListPanel
+            collisions={collisions}
+            selectedCollisionId={selectedCollisionId}
+            onSelectCollision={handleSelectCollisionFromList}
+            onBatchCreateIssues={handleBatchCreateIssuesFromCollisions}
+          />
+        )}
       </div>
     </div>
   );

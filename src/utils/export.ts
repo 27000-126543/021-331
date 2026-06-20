@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 import { DISCIPLINE_LIST, HANDLING_LIST, STATUS_LIST } from '@/types';
 
 export interface ExportIssueItem {
@@ -178,135 +179,125 @@ export function exportToExcel(
   XLSX.writeFile(wb, `${fileName}.xlsx`);
 }
 
-export function exportToPDF(
+export async function exportToPDF(
   groups: ExportGroup[],
   fileName: string,
   filters?: ExportFilters,
   stats?: ExportStats
 ) {
-  const doc = new jsPDF({
-    orientation: 'landscape',
-    unit: 'mm',
-    format: 'a4',
-  });
-
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
-  const margin = 15;
-  let y = margin;
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(18);
-  doc.text('机电管综调整清单', pageWidth / 2, y, { align: 'center' });
-  y += 10;
-
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text(`生成日期: ${new Date().toLocaleDateString('zh-CN')}`, margin, y);
-  doc.text(`专业图例: ${DISCIPLINE_LIST.map(d => d.name).join('、')}`, pageWidth - margin, y, { align: 'right' });
-  y += 8;
-
+  const filterDesc = filters ? getFilterDescription(filters) : '';
+  const statusParts: string[] = [];
   if (stats) {
-    doc.setFillColor(245, 245, 245);
-    doc.rect(margin, y, pageWidth - margin * 2, 15, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.text(`统计概览`, margin + 3, y + 6);
-    doc.setFont('helvetica', 'normal');
-    doc.text(
-      `总记录: ${stats.total}  |  未确认: ${stats.unconfirmed}  |  已逾期: ${stats.overdue}`,
-      margin + 30,
-      y + 6
-    );
-    y += 8;
-    const statusParts: string[] = [];
     STATUS_LIST.forEach((s) => {
       const count = stats.statusCounts[s.key] || 0;
       if (count > 0) statusParts.push(`${s.name}: ${count}`);
     });
-    doc.text(statusParts.join(' | '), margin + 3, y + 6);
-    if (filters) {
-      doc.text(getFilterDescription(filters), pageWidth - margin - 3, y + 6, { align: 'right' });
-    }
-    y += 10;
   }
 
-  const colWidths = [30, 40, 70, 35, 30, 25, 25];
-  const headers = ['楼层', '专业', '问题描述', '影响区域', '处理方式', '责任单位', '状态'];
+  const container = document.createElement('div');
+  container.style.cssText = `
+    position: fixed; left: -9999px; top: 0; z-index: -1;
+    background: white; padding: 20px;
+    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+    width: 1120px;
+  `;
+
+  let html = '';
+
+  html += `<div style="text-align:center;font-size:22px;font-weight:bold;margin-bottom:12px;">机电管综调整清单</div>`;
+
+  html += `<div style="display:flex;justify-content:space-between;font-size:11px;color:#555;margin-bottom:10px;">
+    <span>生成日期: ${new Date().toLocaleDateString('zh-CN')}</span>
+    <span>专业图例: ${DISCIPLINE_LIST.map(d => d.name).join('、')}</span>
+  </div>`;
+
+  if (stats) {
+    html += `<div style="background:#f5f5f5;padding:8px 12px;border-radius:4px;margin-bottom:10px;font-size:11px;">
+      <strong>统计概览</strong> &nbsp;&nbsp;
+      总记录: ${stats.total} &nbsp;|&nbsp; 未确认: ${stats.unconfirmed} &nbsp;|&nbsp; 已逾期: ${stats.overdue}`;
+    if (statusParts.length > 0) {
+      html += `<br/><span style="margin-left:56px;">${statusParts.join(' | ')}</span>`;
+    }
+    if (filterDesc) {
+      html += `<span style="float:right;">${filterDesc}</span>`;
+    }
+    html += `</div>`;
+  }
+
+  html += `<table style="width:100%;border-collapse:collapse;font-size:10px;">`;
+  html += `<thead><tr style="background:#c8c8c8;">
+    <th style="border:1px solid #999;padding:5px 6px;text-align:left;width:80px;">楼层</th>
+    <th style="border:1px solid #999;padding:5px 6px;text-align:left;width:100px;">专业</th>
+    <th style="border:1px solid #999;padding:5px 6px;text-align:left;width:280px;">问题描述</th>
+    <th style="border:1px solid #999;padding:5px 6px;text-align:left;width:130px;">影响区域</th>
+    <th style="border:1px solid #999;padding:5px 6px;text-align:left;width:100px;">处理方式</th>
+    <th style="border:1px solid #999;padding:5px 6px;text-align:left;width:90px;">责任单位</th>
+    <th style="border:1px solid #999;padding:5px 6px;text-align:left;width:80px;">状态</th>
+  </tr></thead><tbody>`;
 
   for (const group of groups) {
-    if (y > pageHeight - margin * 3) {
-      doc.addPage();
-      y = margin;
-    }
+    html += `<tr><td colspan="7" style="background:#1e3a5f;color:white;padding:5px 8px;font-weight:bold;font-size:11px;">
+      ${group.floorName} - ${group.disciplineName} (${group.items.length}条)
+    </td></tr>`;
 
-    doc.setFillColor(30, 58, 95);
-    doc.setTextColor(255, 255, 255);
-    doc.setFont('helvetica', 'bold');
-    doc.rect(margin, y, pageWidth - margin * 2, 8, 'F');
-    doc.text(`${group.floorName} - ${group.disciplineName} (${group.items.length}条)`, margin + 3, y + 5.5);
-    y += 10;
-
-    doc.setFillColor(200, 200, 200);
-    doc.setTextColor(0, 0, 0);
-    let x = margin;
-    for (let i = 0; i < headers.length; i++) {
-      doc.rect(x, y, colWidths[i], 7, 'F');
-      doc.text(headers[i], x + 2, y + 5);
-      x += colWidths[i];
-    }
-    y += 7;
-
-    doc.setFont('helvetica', 'normal');
     for (const item of group.items) {
-      if (y > pageHeight - margin * 2) {
-        doc.addPage();
-        y = margin;
-        x = margin;
-        doc.setFillColor(200, 200, 200);
-        for (let i = 0; i < headers.length; i++) {
-          doc.rect(x, y, colWidths[i], 7, 'F');
-          doc.text(headers[i], x + 2, y + 5);
-          x += colWidths[i];
-        }
-        y += 7;
-      }
-
-      x = margin;
-      doc.rect(x, y, colWidths[0], 6);
-      doc.text(group.floorName, x + 2, y + 4.5);
-      x += colWidths[0];
-
-      doc.rect(x, y, colWidths[1], 6);
-      doc.text(group.disciplineName, x + 2, y + 4.5);
-      x += colWidths[1];
-
-      doc.rect(x, y, colWidths[2], 6);
-      const title = doc.splitTextToSize(item.issueTitle, colWidths[2] - 4);
-      doc.text(title[0] || item.issueTitle, x + 2, y + 4.5);
-      x += colWidths[2];
-
-      doc.rect(x, y, colWidths[3], 6);
-      doc.text(item.affectedArea.substring(0, 10), x + 2, y + 4.5);
-      x += colWidths[3];
-
-      doc.rect(x, y, colWidths[4], 6);
-      doc.text(item.handling.substring(0, 8), x + 2, y + 4.5);
-      x += colWidths[4];
-
-      doc.rect(x, y, colWidths[5], 6);
-      doc.text(item.responsibleUnit.substring(0, 8), x + 2, y + 4.5);
-      x += colWidths[5];
-
-      doc.rect(x, y, colWidths[6], 6);
-      doc.text(item.status, x + 2, y + 4.5);
-
-      y += 6;
+      html += `<tr>
+        <td style="border:1px solid #ccc;padding:4px 6px;">${group.floorName}</td>
+        <td style="border:1px solid #ccc;padding:4px 6px;">${group.disciplineName}</td>
+        <td style="border:1px solid #ccc;padding:4px 6px;">${item.issueTitle}</td>
+        <td style="border:1px solid #ccc;padding:4px 6px;">${item.affectedArea}</td>
+        <td style="border:1px solid #ccc;padding:4px 6px;">${item.handling}</td>
+        <td style="border:1px solid #ccc;padding:4px 6px;">${item.responsibleUnit}</td>
+        <td style="border:1px solid #ccc;padding:4px 6px;">${item.status}</td>
+      </tr>`;
     }
 
-    y += 4;
+    html += `<tr><td colspan="7" style="height:8px;border:none;"></td></tr>`;
   }
 
-  doc.save(`${fileName}.pdf`);
+  html += `</tbody></table>`;
+
+  container.innerHTML = html;
+  document.body.appendChild(container);
+
+  try {
+    const canvas = await html2canvas(container, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+    });
+
+    const doc = new jsPDF({
+      orientation: 'landscape',
+      unit: 'mm',
+      format: 'a4',
+    });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 10;
+
+    const imgWidth = pageWidth - margin * 2;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+    let heightLeft = imgHeight;
+    let position = margin;
+
+    doc.addImage(canvas.toDataURL('image/png'), 'PNG', margin, position, imgWidth, imgHeight);
+    heightLeft -= (pageHeight - margin * 2);
+
+    while (heightLeft > 0) {
+      doc.addPage();
+      position = margin - (imgHeight - heightLeft);
+      doc.addImage(canvas.toDataURL('image/png'), 'PNG', margin, position, imgWidth, imgHeight);
+      heightLeft -= (pageHeight - margin * 2);
+    }
+
+    doc.save(`${fileName}.pdf`);
+  } finally {
+    document.body.removeChild(container);
+  }
 }
 
 export function getExportFileName(projectName?: string): string {
