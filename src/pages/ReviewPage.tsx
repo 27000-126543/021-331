@@ -1,18 +1,28 @@
-import { useState } from 'react';
-import { Download, CheckSquare, Square, ListChecks, FileSpreadsheet, Clock } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Download, CheckSquare, Square, ListChecks, FileSpreadsheet, Clock, Users } from 'lucide-react';
 import PageLayout from '@/components/layout/PageLayout';
 import IssueCard from '@/components/IssueCard';
 import ReviewPanel from '@/components/ReviewPanel';
 import ExportPreview from '@/components/ExportPreview';
+import BatchReviewWizard, { MeetingSummary } from '@/components/BatchReviewWizard';
 import { useReviewStore } from '@/store/reviewStore';
 import { useIssueStore } from '@/store/issueStore';
 import { STATUS_LIST } from '@/types';
 
-type TabType = 'pending' | 'all' | 'export';
+type TabType = 'pending' | 'all' | 'export' | 'meetings';
 
 export default function ReviewPage() {
   const [activeTab, setActiveTab] = useState<TabType>('pending');
   const [showExport, setShowExport] = useState(false);
+  const [showMeetingSummary, setShowMeetingSummary] = useState<string | null>(null);
+  const [showMeetingForm, setShowMeetingForm] = useState(false);
+  const [meetingForm, setMeetingForm] = useState({
+    name: '',
+    date: new Date().toISOString().split('T')[0],
+    host: '刘总（BIM负责人）',
+    attendees: '刘总（BIM负责人）、各专业分包负责人',
+    notes: '',
+  });
 
   const {
     selectedReviewIssueIds,
@@ -22,6 +32,11 @@ export default function ReviewPage() {
     isReviewPanelOpen,
     openReviewPanel,
     closeReviewPanel,
+    addReview,
+    startBatchReview,
+    isBatchReviewActive,
+    getMeetings,
+    createMeeting,
   } = useReviewStore();
   const { issues, updateIssueStatus } = useIssueStore();
 
@@ -31,19 +46,64 @@ export default function ReviewPage() {
       ? pendingIssues
       : activeTab === 'all'
       ? issues
+      : activeTab === 'meetings'
+      ? []
       : issues.filter((i) => i.status !== 'pending');
 
   const allPendingSelected =
     pendingIssues.length > 0 &&
     pendingIssues.every((i) => selectedReviewIssueIds.includes(i.id));
 
+  const meetings = getMeetings();
+
+  useEffect(() => {
+    if (showMeetingForm) {
+      setMeetingForm({
+        name: `会审会议 - ${new Date().toLocaleDateString('zh-CN')}`,
+        date: new Date().toISOString().split('T')[0],
+        host: '刘总（BIM负责人）',
+        attendees: '刘总（BIM负责人）、各专业分包负责人',
+        notes: '',
+      });
+    }
+  }, [showMeetingForm]);
+
   const handleBatchReview = () => {
     if (selectedReviewIssueIds.length === 0) return;
-    openReviewPanel(selectedReviewIssueIds[0]);
+    setShowMeetingForm(true);
+  };
+
+  const confirmStartBatchReview = () => {
+    const meetingInfo = {
+      name: meetingForm.name,
+      date: meetingForm.date,
+      host: meetingForm.host,
+      attendees: meetingForm.attendees.split(/[、,，]/).map((s) => s.trim()).filter(Boolean),
+      notes: meetingForm.notes,
+    };
+    startBatchReview(selectedReviewIssueIds, meetingInfo);
+    setShowMeetingForm(false);
   };
 
   const handleBatchConfirm = () => {
+    if (selectedReviewIssueIds.length === 0) return;
+
+    const confirmed = window.confirm(
+      `确定要将选中的 ${selectedReviewIssueIds.length} 个问题直接标记为已会审吗？\n\n将创建默认会审记录：\n- 处理方式：上翻\n- 责任单位：暖通分包\n- 会审人：刘总（BIM负责人）\n\n建议尽量使用"开始会审"逐条处理，确保信息完整。`
+    );
+
+    if (!confirmed) return;
+
     selectedReviewIssueIds.forEach((id) => {
+      addReview({
+        issueId: id,
+        handling: 'lift_up',
+        customHandling: '',
+        responsibleUnit: '暖通分包',
+        remarks: '通过批量标记已会审',
+        reviewer: '刘总（BIM负责人）',
+        confirmed: false,
+      });
       updateIssueStatus(id, 'reviewed');
     });
     clearSelection();
@@ -52,6 +112,7 @@ export default function ReviewPage() {
   const tabs = [
     { key: 'pending', label: '待会审', count: pendingIssues.length },
     { key: 'all', label: '全部问题', count: issues.length },
+    { key: 'meetings', label: '会议记录', count: meetings.length },
     { key: 'export', label: '导出清单', count: null },
   ];
 
@@ -80,17 +141,25 @@ export default function ReviewPage() {
                 )}
               </button>
               {selectedReviewIssueIds.length > 0 && (
-                <button
-                  onClick={handleBatchReview}
-                  className="btn-accent text-sm flex items-center gap-2"
-                >
-                  <ListChecks className="w-4 h-4" />
-                  批量会审 ({selectedReviewIssueIds.length})
-                </button>
+                <>
+                  <button
+                    onClick={handleBatchReview}
+                    className="btn-accent text-sm flex items-center gap-2"
+                  >
+                    <ListChecks className="w-4 h-4" />
+                    开始会审 ({selectedReviewIssueIds.length})
+                  </button>
+                  <button
+                    onClick={handleBatchConfirm}
+                    className="btn-primary text-sm"
+                  >
+                    标记已会审
+                  </button>
+                </>
               )}
             </>
           )}
-          {activeTab !== 'pending' && (
+          {activeTab !== 'pending' && activeTab !== 'meetings' && (
             <button
               onClick={() => setShowExport(true)}
               className="btn-primary text-sm flex items-center gap-2"
@@ -227,11 +296,61 @@ export default function ReviewPage() {
             </div>
           </div>
         )}
+
+        {activeTab === 'meetings' && (
+          <div className="p-6">
+            {meetings.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Users className="w-8 h-8 text-blue-600" />
+                </div>
+                <h3 className="text-lg font-medium text-gray-800 mb-2">暂无会议记录</h3>
+                <p className="text-sm text-gray-500">
+                  开始批量会审后将自动创建会议记录
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {meetings.map((meeting) => (
+                  <div
+                    key={meeting.id}
+                    className="border border-gray-200 rounded-lg p-4 hover:border-primary-300 transition-colors cursor-pointer"
+                    onClick={() => setShowMeetingSummary(meeting.id)}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <Users className="w-5 h-5 text-primary-600" />
+                        </div>
+                        <div>
+                          <h4 className="font-medium text-gray-800">{meeting.name}</h4>
+                          <p className="text-sm text-gray-500 mt-0.5">
+                            {meeting.date} · {meeting.host}
+                          </p>
+                          <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                            <span>处理问题：{meeting.issueIds.length} 个</span>
+                            <span>已确认：{meeting.reviewRecordIds.filter((id) => {
+                              const review = useReviewStore.getState().reviews.find((r) => r.id === id);
+                              return review?.confirmed;
+                            }).length} 个</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        {meeting.createdAt}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {activeTab !== 'export' && (
+      {activeTab !== 'export' && activeTab !== 'meetings' && (
         <>
-          {selectedReviewIssueIds.length > 0 && (
+          {selectedReviewIssueIds.length > 0 && !isBatchReviewActive && (
             <div className="mb-4 p-3 bg-accent-50 border border-accent-200 rounded-lg flex items-center justify-between">
               <span className="text-sm text-accent-800">
                 已选择 <span className="font-medium">{selectedReviewIssueIds.length}</span> 个问题进行会审
@@ -284,6 +403,111 @@ export default function ReviewPage() {
             </div>
           )}
         </>
+      )}
+
+      {isBatchReviewActive && (
+        <BatchReviewWizard onClose={() => {}} />
+      )}
+
+      {showMeetingForm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg">
+            <div className="px-6 py-4 border-b border-gray-200 bg-primary-600 text-white">
+              <h3 className="text-lg font-semibold">开始会审会议</h3>
+              <p className="text-sm text-primary-100 mt-0.5">
+                将处理 {selectedReviewIssueIds.length} 个问题
+              </p>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  会议名称 <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={meetingForm.name}
+                  onChange={(e) => setMeetingForm({ ...meetingForm, name: e.target.value })}
+                  className="input-field"
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    会议日期 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={meetingForm.date}
+                    onChange={(e) => setMeetingForm({ ...meetingForm, date: e.target.value })}
+                    className="input-field"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    主持人 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={meetingForm.host}
+                    onChange={(e) => setMeetingForm({ ...meetingForm, host: e.target.value })}
+                    className="input-field"
+                    required
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  参会人员 <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={meetingForm.attendees}
+                  onChange={(e) => setMeetingForm({ ...meetingForm, attendees: e.target.value })}
+                  placeholder="多个参会人用顿号或逗号分隔"
+                  className="input-field"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  会议备注
+                </label>
+                <textarea
+                  value={meetingForm.notes}
+                  onChange={(e) => setMeetingForm({ ...meetingForm, notes: e.target.value })}
+                  placeholder="记录会议主题、决议等..."
+                  rows={3}
+                  className="input-field resize-none"
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3 bg-gray-50">
+              <button
+                onClick={() => setShowMeetingForm(false)}
+                className="btn-secondary text-sm"
+              >
+                取消
+              </button>
+              <button
+                onClick={confirmStartBatchReview}
+                disabled={!meetingForm.name.trim() || !meetingForm.host.trim()}
+                className="btn-accent text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ListChecks className="w-4 h-4" />
+                开始逐条会审
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showMeetingSummary && (
+        <MeetingSummary
+          meetingId={showMeetingSummary}
+          onClose={() => setShowMeetingSummary(null)}
+        />
       )}
 
       <ReviewPanel isOpen={isReviewPanelOpen} onClose={closeReviewPanel} />

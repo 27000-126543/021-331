@@ -55,11 +55,45 @@ export default function IssueForm({ isOpen, onClose }: IssueFormProps) {
         deadline: formatDate(addDays(new Date(), 7)),
         reporter: '张工（BIM）',
       });
+      setErrors({});
     }
   }, [isOpen]);
 
   const floor = getSelectedFloor();
   const floorElements = elements.filter((e) => e.floorId === selectedFloorId);
+
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const validateForm = (): boolean => {
+    const newErrors: Record<string, string> = {};
+
+    if (!formData.title.trim()) {
+      newErrors.title = '请输入问题标题';
+    } else if (formData.title.trim().length < 5) {
+      newErrors.title = '问题标题至少需要5个字符';
+    }
+
+    if (!formData.affectedArea.trim()) {
+      newErrors.affectedArea = '请输入影响区域';
+    }
+
+    if (!formData.suggestedOrder.trim()) {
+      newErrors.suggestedOrder = '请输入建议让位顺序';
+    } else if (formData.suggestedOrder.trim().length < 5) {
+      newErrors.suggestedOrder = '建议让位顺序至少需要5个字符';
+    }
+
+    if (!formData.reporter.trim()) {
+      newErrors.reporter = '请输入上报人';
+    }
+
+    if (selectedElements.length === 0) {
+      newErrors.elements = '请至少选择一个构件';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,8 +103,7 @@ export default function IssueForm({ isOpen, onClose }: IssueFormProps) {
       return;
     }
 
-    if (selectedElements.length === 0) {
-      alert('请至少选择一个构件');
+    if (!validateForm()) {
       return;
     }
 
@@ -124,11 +157,17 @@ export default function IssueForm({ isOpen, onClose }: IssueFormProps) {
               <input
                 type="text"
                 value={formData.title}
-                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, title: e.target.value });
+                  if (errors.title) setErrors({ ...errors, title: '' });
+                }}
                 placeholder="例如：B1层走廊风管与水管交叉碰撞"
-                className="input-field"
+                className={`input-field ${errors.title ? 'border-red-500 focus:ring-red-500' : ''}`}
                 required
               />
+              {errors.title && (
+                <p className="mt-1 text-sm text-red-500">{errors.title}</p>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -180,11 +219,17 @@ export default function IssueForm({ isOpen, onClose }: IssueFormProps) {
               <input
                 type="text"
                 value={formData.affectedArea}
-                onChange={(e) => setFormData({ ...formData, affectedArea: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, affectedArea: e.target.value });
+                  if (errors.affectedArea) setErrors({ ...errors, affectedArea: '' });
+                }}
                 placeholder="例如：B1层走廊东端、1#机电房入口"
-                className="input-field"
+                className={`input-field ${errors.affectedArea ? 'border-red-500 focus:ring-red-500' : ''}`}
                 required
               />
+              {errors.affectedArea && (
+                <p className="mt-1 text-sm text-red-500">{errors.affectedArea}</p>
+              )}
             </div>
 
             <div>
@@ -194,7 +239,7 @@ export default function IssueForm({ isOpen, onClose }: IssueFormProps) {
                   (已选 {selectedElements.length} 个)
                 </span>
               </label>
-              <div className="border-2 border-gray-200 rounded-lg p-3 max-h-40 overflow-y-auto scrollbar-thin space-y-1">
+              <div className={`border-2 rounded-lg p-3 max-h-40 overflow-y-auto scrollbar-thin space-y-1 ${errors.elements ? 'border-red-500' : 'border-gray-200'}`}>
                 {floorElements.length === 0 ? (
                   <p className="text-sm text-gray-400 text-center py-4">
                     请先在模型中选择构件
@@ -212,7 +257,10 @@ export default function IssueForm({ isOpen, onClose }: IssueFormProps) {
                       <input
                         type="checkbox"
                         checked={selectedElements.includes(elem.id)}
-                        onChange={() => toggleElement(elem.id)}
+                        onChange={() => {
+                          toggleElement(elem.id);
+                          if (errors.elements) setErrors({ ...errors, elements: '' });
+                        }}
                         className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
                       />
                       <div
@@ -229,6 +277,9 @@ export default function IssueForm({ isOpen, onClose }: IssueFormProps) {
                   ))
                 )}
               </div>
+              {errors.elements && (
+                <p className="mt-1 text-sm text-red-500">{errors.elements}</p>
+              )}
             </div>
 
             <div>
@@ -237,12 +288,18 @@ export default function IssueForm({ isOpen, onClose }: IssueFormProps) {
               </label>
               <textarea
                 value={formData.suggestedOrder}
-                onChange={(e) => setFormData({ ...formData, suggestedOrder: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, suggestedOrder: e.target.value });
+                  if (errors.suggestedOrder) setErrors({ ...errors, suggestedOrder: '' });
+                }}
                 placeholder="例如：风管让水管，水管为重力流不可动"
                 rows={3}
-                className="input-field resize-none"
+                className={`input-field resize-none ${errors.suggestedOrder ? 'border-red-500 focus:ring-red-500' : ''}`}
                 required
               />
+              {errors.suggestedOrder && (
+                <p className="mt-1 text-sm text-red-500">{errors.suggestedOrder}</p>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -266,10 +323,16 @@ export default function IssueForm({ isOpen, onClose }: IssueFormProps) {
                 <input
                   type="text"
                   value={formData.reporter}
-                  onChange={(e) => setFormData({ ...formData, reporter: e.target.value })}
-                  className="input-field"
+                  onChange={(e) => {
+                    setFormData({ ...formData, reporter: e.target.value });
+                    if (errors.reporter) setErrors({ ...errors, reporter: '' });
+                  }}
+                  className={`input-field ${errors.reporter ? 'border-red-500 focus:ring-red-500' : ''}`}
                   required
                 />
+                {errors.reporter && (
+                  <p className="mt-1 text-sm text-red-500">{errors.reporter}</p>
+                )}
               </div>
             </div>
           </div>

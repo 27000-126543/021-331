@@ -69,6 +69,31 @@ export interface ReviewRecord {
   reviewedAt: string;
   confirmed: boolean;
   confirmedAt?: string;
+  meetingId?: string;
+}
+
+export interface CollisionPoint {
+  id: string;
+  elementIds: string[];
+  elements: ModelElement[];
+  position: { x: number; y: number; width: number; height: number };
+  collisionType: 'horizontal' | 'vertical' | 'both';
+  conflictReason: string;
+  minElevation: number;
+  maxElevation: number;
+  clearance: number;
+}
+
+export interface MeetingRecord {
+  id: string;
+  name: string;
+  date: string;
+  host: string;
+  attendees: string[];
+  issueIds: string[];
+  reviewRecordIds: string[];
+  notes: string;
+  createdAt: string;
 }
 
 export interface DisciplineInfo {

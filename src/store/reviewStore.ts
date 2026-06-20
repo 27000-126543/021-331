@@ -1,15 +1,20 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { ReviewRecord, HandlingType, Issue } from '@/types';
+import { ReviewRecord, HandlingType, Issue, MeetingRecord } from '@/types';
 import { mockReviews } from '@/data/mockReviews';
 import { generateId, formatDateTime } from '@/utils/date';
 import { useIssueStore } from './issueStore';
 
 interface ReviewState {
   reviews: ReviewRecord[];
+  meetings: MeetingRecord[];
   selectedReviewIssueIds: string[];
   isReviewPanelOpen: boolean;
   currentReviewIssueId: string | null;
+  isBatchReviewActive: boolean;
+  batchReviewIssueIds: string[];
+  currentBatchIndex: number;
+  currentMeetingId: string | null;
   setSelectedReviewIssues: (ids: string[]) => void;
   toggleSelectedIssue: (issueId: string) => void;
   selectAllPending: () => void;
@@ -37,15 +42,29 @@ interface ReviewState {
       confirmed: boolean;
     }[];
   }[];
+  startBatchReview: (issueIds: string[], meetingInfo?: Partial<MeetingRecord>) => void;
+  nextBatchReview: () => void;
+  prevBatchReview: () => void;
+  completeBatchReview: () => void;
+  cancelBatchReview: () => void;
+  createMeeting: (meeting: Omit<MeetingRecord, 'id' | 'createdAt'>) => MeetingRecord;
+  getMeeting: (meetingId: string) => MeetingRecord | undefined;
+  getMeetings: () => MeetingRecord[];
+  updateMeeting: (meetingId: string, updates: Partial<MeetingRecord>) => void;
 }
 
 export const useReviewStore = create<ReviewState>()(
   persist(
     (set, get) => ({
       reviews: mockReviews,
+      meetings: [],
       selectedReviewIssueIds: [],
       isReviewPanelOpen: false,
       currentReviewIssueId: null,
+      isBatchReviewActive: false,
+      batchReviewIssueIds: [],
+      currentBatchIndex: 0,
+      currentMeetingId: null,
 
       setSelectedReviewIssues: (ids) =>
         set({ selectedReviewIssueIds: ids }),
@@ -75,21 +94,63 @@ export const useReviewStore = create<ReviewState>()(
         set({ isReviewPanelOpen: false, currentReviewIssueId: null }),
 
       addReview: (review) =>
-        set((state) => ({
-          reviews: [
-            {
-              ...review,
-              id: generateId(),
-              reviewedAt: formatDateTime(new Date()),
-            },
-            ...state.reviews,
-          ],
-          isReviewPanelOpen: false,
-          currentReviewIssueId: null,
-          selectedReviewIssueIds: state.selectedReviewIssueIds.filter(
-            (id) => id !== review.issueId
-          ),
-        })),
+        set((state) => {
+          const newReview = {
+            ...review,
+            id: generateId(),
+            reviewedAt: formatDateTime(new Date()),
+            meetingId: state.isBatchReviewActive ? state.currentMeetingId || undefined : undefined,
+          };
+
+          const newState = {
+            reviews: [newReview, ...state.reviews],
+            selectedReviewIssueIds: state.selectedReviewIssueIds.filter(
+              (id) => id !== review.issueId
+            ),
+          };
+
+          if (state.isBatchReviewActive) {
+            if (state.currentBatchIndex < state.batchReviewIssueIds.length - 1) {
+              const nextIndex = state.currentBatchIndex + 1;
+              return {
+                ...newState,
+                currentBatchIndex: nextIndex,
+                currentReviewIssueId: state.batchReviewIssueIds[nextIndex],
+                isReviewPanelOpen: true,
+                meetings: state.currentMeetingId
+                  ? state.meetings.map((m) =>
+                      m.id === state.currentMeetingId
+                        ? { ...m, reviewRecordIds: [...m.reviewRecordIds, newReview.id] }
+                        : m
+                    )
+                  : state.meetings,
+              };
+            } else {
+              return {
+                ...newState,
+                isBatchReviewActive: false,
+                batchReviewIssueIds: [],
+                currentBatchIndex: 0,
+                currentReviewIssueId: null,
+                isReviewPanelOpen: false,
+                currentMeetingId: null,
+                meetings: state.currentMeetingId
+                  ? state.meetings.map((m) =>
+                      m.id === state.currentMeetingId
+                        ? { ...m, reviewRecordIds: [...m.reviewRecordIds, newReview.id] }
+                        : m
+                    )
+                  : state.meetings,
+              };
+            }
+          }
+
+          return {
+            ...newState,
+            isReviewPanelOpen: false,
+            currentReviewIssueId: null,
+          };
+        }),
 
       updateReview: (id, updates) =>
         set((state) => ({
@@ -192,11 +253,136 @@ export const useReviewStore = create<ReviewState>()(
 
         return result.sort((a, b) => a.floorName.localeCompare(b.floorName));
       },
+
+      startBatchReview: (issueIds, meetingInfo) => {
+        const state = get();
+        let meetingId = state.currentMeetingId;
+
+        if (!meetingId && issueIds.length > 0) {
+          const meeting: MeetingRecord = {
+            id: generateId(),
+            name: meetingInfo?.name || `会审会议 - ${formatDateTime(new Date())}`,
+            date: meetingInfo?.date || new Date().toISOString().split('T')[0],
+            host: meetingInfo?.host || '刘总（BIM负责人）',
+            attendees: meetingInfo?.attendees || ['刘总（BIM负责人）', '各专业分包负责人'],
+            issueIds: [...issueIds],
+            reviewRecordIds: [],
+            notes: meetingInfo?.notes || '',
+            createdAt: formatDateTime(new Date()),
+          };
+          set((state) => ({
+            meetings: [meeting, ...state.meetings],
+            currentMeetingId: meeting.id,
+          }));
+          meetingId = meeting.id;
+        }
+
+        set({
+          isBatchReviewActive: true,
+          batchReviewIssueIds: [...issueIds],
+          currentBatchIndex: 0,
+          isReviewPanelOpen: true,
+          currentReviewIssueId: issueIds[0] || null,
+        });
+      },
+
+      nextBatchReview: () => {
+        const state = get();
+        if (state.currentBatchIndex < state.batchReviewIssueIds.length - 1) {
+          const nextIndex = state.currentBatchIndex + 1;
+          set({
+            currentBatchIndex: nextIndex,
+            currentReviewIssueId: state.batchReviewIssueIds[nextIndex],
+            isReviewPanelOpen: true,
+          });
+        } else {
+          get().completeBatchReview();
+        }
+      },
+
+      prevBatchReview: () => {
+        const state = get();
+        if (state.currentBatchIndex > 0) {
+          const prevIndex = state.currentBatchIndex - 1;
+          set({
+            currentBatchIndex: prevIndex,
+            currentReviewIssueId: state.batchReviewIssueIds[prevIndex],
+            isReviewPanelOpen: true,
+          });
+        }
+      },
+
+      completeBatchReview: () => {
+        const state = get();
+        const reviewedIds = state.batchReviewIssueIds.filter((id) =>
+          state.reviews.some((r) => r.issueId === id)
+        );
+
+        if (state.currentMeetingId) {
+          set((state) => ({
+            meetings: state.meetings.map((m) =>
+              m.id === state.currentMeetingId
+                ? { ...m, reviewRecordIds: [...m.reviewRecordIds, ...state.reviews.filter((r) => m.issueIds.includes(r.issueId)).map((r) => r.id)] }
+                : m
+            ),
+          }));
+        }
+
+        set({
+          isBatchReviewActive: false,
+          batchReviewIssueIds: [],
+          currentBatchIndex: 0,
+          currentReviewIssueId: null,
+          isReviewPanelOpen: false,
+          currentMeetingId: null,
+          selectedReviewIssueIds: [],
+        });
+      },
+
+      cancelBatchReview: () => {
+        set({
+          isBatchReviewActive: false,
+          batchReviewIssueIds: [],
+          currentBatchIndex: 0,
+          currentReviewIssueId: null,
+          isReviewPanelOpen: false,
+          currentMeetingId: null,
+        });
+      },
+
+      createMeeting: (meeting) => {
+        const newMeeting: MeetingRecord = {
+          ...meeting,
+          id: generateId(),
+          createdAt: formatDateTime(new Date()),
+        };
+        set((state) => ({
+          meetings: [newMeeting, ...state.meetings],
+        }));
+        return newMeeting;
+      },
+
+      getMeeting: (meetingId) => {
+        return get().meetings.find((m) => m.id === meetingId);
+      },
+
+      getMeetings: () => {
+        return get().meetings;
+      },
+
+      updateMeeting: (meetingId, updates) => {
+        set((state) => ({
+          meetings: state.meetings.map((m) =>
+            m.id === meetingId ? { ...m, ...updates } : m
+          ),
+        }));
+      },
     }),
     {
       name: 'review-store',
       partialize: (state) => ({
         reviews: state.reviews,
+        meetings: state.meetings,
       }),
     }
   )

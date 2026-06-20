@@ -31,6 +31,8 @@ export default function ReviewPanel({ isOpen, onClose }: ReviewPanelProps) {
     : null;
   const issue = issues.find((i) => i.id === currentReviewIssueId);
 
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
   useEffect(() => {
     if (existingReview) {
       setFormData({
@@ -51,13 +53,39 @@ export default function ReviewPanel({ isOpen, onClose }: ReviewPanelProps) {
         confirmed: false,
       });
     }
+    setErrors({});
   }, [currentReviewIssueId, existingReview]);
+
+  const validateForm = (): boolean => {
+    const newErrors: Record<string, string> = {};
+
+    if (formData.handling === 'custom' && !formData.customHandling.trim()) {
+      newErrors.customHandling = '请输入自定义处理方式';
+    } else if (formData.handling === 'custom' && formData.customHandling.trim().length < 3) {
+      newErrors.customHandling = '处理方式至少需要3个字符';
+    }
+
+    if (!formData.responsibleUnit.trim()) {
+      newErrors.responsibleUnit = '请选择责任单位';
+    }
+
+    if (!formData.reviewer.trim()) {
+      newErrors.reviewer = '请输入会审人';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!currentReviewIssueId) {
       alert('请选择要处理的问题');
+      return;
+    }
+
+    if (!validateForm()) {
       return;
     }
 
@@ -133,11 +161,17 @@ export default function ReviewPanel({ isOpen, onClose }: ReviewPanelProps) {
                 <input
                   type="text"
                   value={formData.customHandling}
-                  onChange={(e) => setFormData({ ...formData, customHandling: e.target.value })}
+                  onChange={(e) => {
+                    setFormData({ ...formData, customHandling: e.target.value });
+                    if (errors.customHandling) setErrors({ ...errors, customHandling: '' });
+                  }}
                   placeholder="请输入具体处理方式"
-                  className="input-field"
+                  className={`input-field ${errors.customHandling ? 'border-red-500 focus:ring-red-500' : ''}`}
                   required={formData.handling === 'custom'}
                 />
+                {errors.customHandling && (
+                  <p className="mt-1 text-sm text-red-500">{errors.customHandling}</p>
+                )}
               </div>
             )}
 
@@ -147,8 +181,11 @@ export default function ReviewPanel({ isOpen, onClose }: ReviewPanelProps) {
               </label>
               <select
                 value={formData.responsibleUnit}
-                onChange={(e) => setFormData({ ...formData, responsibleUnit: e.target.value })}
-                className="input-field"
+                onChange={(e) => {
+                  setFormData({ ...formData, responsibleUnit: e.target.value });
+                  if (errors.responsibleUnit) setErrors({ ...errors, responsibleUnit: '' });
+                }}
+                className={`input-field ${errors.responsibleUnit ? 'border-red-500 focus:ring-red-500' : ''}`}
                 required
               >
                 {RESPONSIBLE_UNITS.map((unit) => (
@@ -157,6 +194,9 @@ export default function ReviewPanel({ isOpen, onClose }: ReviewPanelProps) {
                   </option>
                 ))}
               </select>
+              {errors.responsibleUnit && (
+                <p className="mt-1 text-sm text-red-500">{errors.responsibleUnit}</p>
+              )}
             </div>
 
             <div>
@@ -179,10 +219,16 @@ export default function ReviewPanel({ isOpen, onClose }: ReviewPanelProps) {
               <input
                 type="text"
                 value={formData.reviewer}
-                onChange={(e) => setFormData({ ...formData, reviewer: e.target.value })}
-                className="input-field"
+                onChange={(e) => {
+                  setFormData({ ...formData, reviewer: e.target.value });
+                  if (errors.reviewer) setErrors({ ...errors, reviewer: '' });
+                }}
+                className={`input-field ${errors.reviewer ? 'border-red-500 focus:ring-red-500' : ''}`}
                 required
               />
+              {errors.reviewer && (
+                <p className="mt-1 text-sm text-red-500">{errors.reviewer}</p>
+              )}
             </div>
 
             <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">

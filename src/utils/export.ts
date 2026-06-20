@@ -18,11 +18,96 @@ export interface ExportGroup {
   items: ExportIssueItem[];
 }
 
-export function exportToExcel(groups: ExportGroup[], fileName: string) {
+export interface ExportFilters {
+  projectId: string | 'all';
+  buildingId: string | 'all';
+  floorId: string | 'all';
+  discipline: string | 'all';
+  status: string | 'all';
+}
+
+export interface ExportStats {
+  total: number;
+  unconfirmed: number;
+  overdue: number;
+  statusCounts: Record<string, number>;
+}
+
+function getFilterDescription(filters: ExportFilters): string {
+  const parts: string[] = [];
+  if (filters.discipline !== 'all') {
+    const discipline = DISCIPLINE_LIST.find((d) => d.key === filters.discipline);
+    if (discipline) parts.push(`专业: ${discipline.name}`);
+  }
+  if (filters.status !== 'all') {
+    const status = STATUS_LIST.find((s) => s.key === filters.status);
+    if (status) parts.push(`状态: ${status.name}`);
+  }
+  return parts.length > 0 ? `筛选条件: ${parts.join(' · ')}` : '筛选条件: 全部';
+}
+
+export function exportToExcel(
+  groups: ExportGroup[],
+  fileName: string,
+  filters?: ExportFilters,
+  stats?: ExportStats
+) {
   const wb = XLSX.utils.book_new();
 
   const allData: Record<string, unknown>[] = [];
   let rowIndex = 1;
+
+  if (stats) {
+    allData.push({
+      '楼层': '统计概览',
+      '专业': '',
+      '问题标题': `总记录数: ${stats.total}`,
+      '影响区域': `未确认: ${stats.unconfirmed}`,
+      '处理方式': `已逾期: ${stats.overdue}`,
+      '责任单位': '',
+      '整改期限': '',
+      '状态': '',
+      '是否确认': '',
+      '_isHeader': true,
+      '_rowIndex': rowIndex,
+    });
+    rowIndex++;
+
+    const statusParts: string[] = [];
+    STATUS_LIST.forEach((s) => {
+      const count = stats.statusCounts[s.key] || 0;
+      if (count > 0) statusParts.push(`${s.name}: ${count}`);
+    });
+    allData.push({
+      '楼层': '',
+      '专业': '',
+      '问题标题': statusParts.join(' | '),
+      '影响区域': filters ? getFilterDescription(filters) : '',
+      '处理方式': '',
+      '责任单位': '',
+      '整改期限': '',
+      '状态': '',
+      '是否确认': '',
+      '_isHeader': true,
+      '_rowIndex': rowIndex,
+    });
+    rowIndex++;
+
+    allData.push({
+      '楼层': '',
+      '专业': '',
+      '问题标题': '',
+      '影响区域': '',
+      '处理方式': '',
+      '责任单位': '',
+      '整改期限': '',
+      '状态': '',
+      '是否确认': '',
+      '_isSpacer': true,
+      '_rowIndex': rowIndex,
+    });
+    rowIndex++;
+  }
 
   for (const group of groups) {
     allData.push({
@@ -93,7 +178,12 @@ export function exportToExcel(groups: ExportGroup[], fileName: string) {
   XLSX.writeFile(wb, `${fileName}.xlsx`);
 }
 
-export function exportToPDF(groups: ExportGroup[], fileName: string) {
+export function exportToPDF(
+  groups: ExportGroup[],
+  fileName: string,
+  filters?: ExportFilters,
+  stats?: ExportStats
+) {
   const doc = new jsPDF({
     orientation: 'landscape',
     unit: 'mm',
@@ -116,7 +206,31 @@ export function exportToPDF(groups: ExportGroup[], fileName: string) {
   doc.text(`专业图例: ${DISCIPLINE_LIST.map(d => d.name).join('、')}`, pageWidth - margin, y, { align: 'right' });
   y += 8;
 
-  const colWidths = [30, 40, 80, 35, 30, 25, 25];
+  if (stats) {
+    doc.setFillColor(245, 245, 245);
+    doc.rect(margin, y, pageWidth - margin * 2, 15, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.text(`统计概览`, margin + 3, y + 6);
+    doc.setFont('helvetica', 'normal');
+    doc.text(
+      `总记录: ${stats.total}  |  未确认: ${stats.unconfirmed}  |  已逾期: ${stats.overdue}`,
+      margin + 30,
+      y + 6
+    );
+    y += 8;
+    const statusParts: string[] = [];
+    STATUS_LIST.forEach((s) => {
+      const count = stats.statusCounts[s.key] || 0;
+      if (count > 0) statusParts.push(`${s.name}: ${count}`);
+    });
+    doc.text(statusParts.join(' | '), margin + 3, y + 6);
+    if (filters) {
+      doc.text(getFilterDescription(filters), pageWidth - margin - 3, y + 6, { align: 'right' });
+    }
+    y += 10;
+  }
+
+  const colWidths = [30, 40, 70, 35, 30, 25, 25];
   const headers = ['楼层', '专业', '问题描述', '影响区域', '处理方式', '责任单位', '状态'];
 
   for (const group of groups) {
@@ -129,7 +243,7 @@ export function exportToPDF(groups: ExportGroup[], fileName: string) {
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'bold');
     doc.rect(margin, y, pageWidth - margin * 2, 8, 'F');
-    doc.text(`${group.floorName} - ${group.disciplineName}`, margin + 3, y + 5.5);
+    doc.text(`${group.floorName} - ${group.disciplineName} (${group.items.length}条)`, margin + 3, y + 5.5);
     y += 10;
 
     doc.setFillColor(200, 200, 200);

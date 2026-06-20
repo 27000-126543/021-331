@@ -2,17 +2,20 @@ import { useState, useRef, useEffect } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import { useIssueStore } from '@/store/issueStore';
 import { getDisciplineName, getDisciplineColor } from '@/utils/disciplineColors';
-import { ModelElement } from '@/types';
-import { ZoomIn, ZoomOut, Move, AlertTriangle, Plus } from 'lucide-react';
+import { getCollisionTypeColor } from '@/utils/collision';
+import { ModelElement, CollisionPoint } from '@/types';
+import CollisionPanel from './CollisionPanel';
+import { ZoomIn, ZoomOut, Move, AlertTriangle, Plus, Upload, Scan, Eye, EyeOff } from 'lucide-react';
 
 interface CanvasElementProps {
   element: ModelElement;
   isSelected: boolean;
   hasIssue: boolean;
+  isInCollision: boolean;
   onClick: () => void;
 }
 
-function CanvasElement({ element, isSelected, hasIssue, onClick }: CanvasElementProps) {
+function CanvasElement({ element, isSelected, hasIssue, isInCollision, onClick }: CanvasElementProps) {
   const [isHovered, setIsHovered] = useState(false);
 
   return (
@@ -26,7 +29,7 @@ function CanvasElement({ element, isSelected, hasIssue, onClick }: CanvasElement
         width: `${element.position.width}px`,
         height: `${element.position.height}px`,
         backgroundColor: element.color,
-        opacity: isSelected || isHovered ? 0.9 : 0.75,
+        opacity: isSelected || isHovered ? 0.9 : isInCollision ? 0.85 : 0.75,
         boxShadow: isSelected
           ? '0 0 0 2px rgba(232, 119, 34, 0.3), 0 4px 12px rgba(0,0,0,0.2)'
           : isHovered
@@ -38,7 +41,7 @@ function CanvasElement({ element, isSelected, hasIssue, onClick }: CanvasElement
       onMouseLeave={() => setIsHovered(false)}
     >
       {hasIssue && (
-        <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center animate-pulse">
+        <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center animate-pulse z-10">
           <AlertTriangle className="w-3 h-3 text-white" />
         </div>
       )}
@@ -53,6 +56,59 @@ function CanvasElement({ element, isSelected, hasIssue, onClick }: CanvasElement
           <div className="text-gray-300">规格: {element.size}</div>
         </div>
       )}
+    </div>
+  );
+}
+
+interface CollisionAreaProps {
+  collision: CollisionPoint;
+  isSelected: boolean;
+  onClick: (e: React.MouseEvent) => void;
+}
+
+function CollisionArea({ collision, isSelected, onClick }: CollisionAreaProps) {
+  const [isHovered, setIsHovered] = useState(false);
+  const color = getCollisionTypeColor(collision.collisionType);
+
+  return (
+    <div
+      className={`absolute cursor-pointer z-15 transition-all duration-200 ${
+        isSelected ? 'scale-105' : isHovered ? 'scale-102' : ''
+      }`}
+      style={{
+        left: `${collision.position.x}px`,
+        top: `${collision.position.y}px`,
+        width: `${collision.position.width}px`,
+        height: `${collision.position.height}px`,
+      }}
+      onClick={onClick}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      <div
+        className={`w-full h-full rounded animate-pulse ${
+          isSelected ? 'opacity-40' : isHovered ? 'opacity-30' : 'opacity-20'
+        }`}
+        style={{ backgroundColor: color }}
+      />
+      <div
+        className="absolute inset-0 rounded border-2 border-dashed"
+        style={{ borderColor: color }}
+      />
+      <div
+        className={`absolute -top-6 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded text-xs font-medium text-white whitespace-nowrap transition-opacity ${
+          isSelected || isHovered ? 'opacity-100' : 'opacity-0'
+        }`}
+        style={{ backgroundColor: color }}
+      >
+        碰撞点 ({collision.elementIds.length}个构件)
+      </div>
+      <div
+        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center"
+        style={{ backgroundColor: color }}
+      >
+        <AlertTriangle className="w-4 h-4 text-white" />
+      </div>
     </div>
   );
 }
@@ -113,32 +169,69 @@ export default function ModelCanvas() {
   const {
     selectedFloorId,
     selectedElementId,
+    selectedCollisionId,
     visibleDisciplines,
+    showCollisions,
+    collisions,
     setSelectedElement,
+    setSelectedCollision,
+    toggleShowCollisions,
     getElementsForFloor,
     getSelectedFloor,
     getSelectedElement,
+    getSelectedCollision,
+    detectCollisionsForFloor,
+    uploadModel,
   } = useProjectStore();
   const { openForm, getIssuesForFloor } = useIssueStore();
   const containerRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [isDetecting, setIsDetecting] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   const floor = getSelectedFloor();
   const selectedElement = getSelectedElement();
+  const selectedCollision = getSelectedCollision();
   const elements = selectedFloorId ? getElementsForFloor(selectedFloorId) : [];
   const visibleElements = elements.filter((e) => visibleDisciplines.includes(e.discipline));
   const floorIssues = selectedFloorId ? getIssuesForFloor(selectedFloorId) : [];
 
   const elementIdsWithIssues = new Set(floorIssues.flatMap((i) => i.elementIds));
+  const elementIdsInCollision = new Set(collisions.flatMap((c) => c.elementIds));
 
   useEffect(() => {
     setScale(1);
     setOffset({ x: 0, y: 0 });
     setSelectedElement(null);
-  }, [selectedFloorId, setSelectedElement]);
+    setSelectedCollision(null);
+  }, [selectedFloorId, setSelectedElement, setSelectedCollision]);
+
+  const handleDetectCollisions = () => {
+    if (!selectedFloorId) return;
+    setIsDetecting(true);
+    setTimeout(() => {
+      detectCollisionsForFloor(selectedFloorId);
+      setIsDetecting(false);
+    }, 500);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedFloorId) return;
+
+    setIsUploading(true);
+    setTimeout(() => {
+      uploadModel(selectedFloorId, file.name, '张工');
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }, 1000);
+  };
 
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     if (e.button === 1 || (e.button === 0 && e.altKey)) {
@@ -163,6 +256,7 @@ export default function ModelCanvas() {
   const handleCanvasClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
       setSelectedElement(null);
+      setSelectedCollision(null);
     }
   };
 
@@ -181,6 +275,11 @@ export default function ModelCanvas() {
     }
   };
 
+  const handleCreateIssueFromCollision = (elementIds: string[]) => {
+    openForm(elementIds);
+    setSelectedCollision(null);
+  };
+
   if (!selectedFloorId) {
     return (
       <div className="model-canvas flex-1 flex items-center justify-center">
@@ -194,16 +293,64 @@ export default function ModelCanvas() {
 
   return (
     <div className="flex-1 flex flex-col">
-      {floor && floor.modelUrl && (
+      {floor && (
         <div className="bg-white border-b border-gray-200 px-4 py-2 flex items-center justify-between">
           <div className="text-sm text-gray-600">
             <span className="font-medium">{floor.name}</span>
             <span className="mx-2">|</span>
             <span>标高: {floor.elevation}m</span>
-            <span className="mx-2">|</span>
-            <span>上传: {floor.modelUploadedBy} - {floor.modelUploadedAt}</span>
+            {floor.modelUploadedBy && (
+              <>
+                <span className="mx-2">|</span>
+                <span>上传: {floor.modelUploadedBy} - {floor.modelUploadedAt}</span>
+              </>
+            )}
+            {showCollisions && collisions.length > 0 && (
+              <>
+                <span className="mx-2">|</span>
+                <span className="text-red-600 font-medium">
+                  检测到 {collisions.length} 个碰撞点
+                </span>
+              </>
+            )}
           </div>
           <div className="flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".ifc,.rvt,.dwg"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            {!floor.modelUrl && (
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                className="px-3 py-1.5 text-sm bg-primary-600 text-white border-2 border-primary-700 hover:bg-primary-700 transition-all flex items-center gap-1.5"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                {isUploading ? '上传中...' : '上传模型'}
+              </button>
+            )}
+            <button
+              onClick={handleDetectCollisions}
+              disabled={isDetecting}
+              className="px-3 py-1.5 text-sm bg-accent-500 text-white border-2 border-accent-600 hover:bg-accent-600 transition-all flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <Scan className="w-3.5 h-3.5" />
+              {isDetecting ? '检测中...' : '碰撞检测'}
+            </button>
+            <button
+              onClick={toggleShowCollisions}
+              className={`px-3 py-1.5 text-sm border-2 transition-all flex items-center gap-1.5 ${
+                showCollisions
+                  ? 'bg-primary-600 text-white border-primary-700'
+                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              {showCollisions ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+              显示碰撞
+            </button>
             <span className="text-xs text-gray-500">缩放: {Math.round(scale * 100)}%</span>
             <button
               onClick={() => handleZoom(0.1)}
@@ -254,12 +401,26 @@ export default function ModelCanvas() {
             marginTop: '-300px',
           }}
         >
+          {showCollisions &&
+            collisions.map((collision) => (
+              <CollisionArea
+                key={collision.id}
+                collision={collision}
+                isSelected={selectedCollisionId === collision.id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedCollision(collision.id);
+                }}
+              />
+            ))}
+
           {visibleElements.map((element) => (
             <CanvasElement
               key={element.id}
               element={element}
               isSelected={selectedElementId === element.id}
               hasIssue={elementIdsWithIssues.has(element.id)}
+              isInCollision={elementIdsInCollision.has(element.id)}
               onClick={() => setSelectedElement(element.id)}
             />
           ))}
@@ -269,7 +430,17 @@ export default function ModelCanvas() {
           <div className="absolute inset-0 flex items-center justify-center bg-gray-100/80">
             <div className="text-center bg-white p-8 rounded-lg shadow-md border border-gray-200">
               <p className="text-lg text-gray-600 mb-4">该楼层暂无模型</p>
-              <button className="btn-primary text-sm">上传模型</button>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading}
+                  className="btn-primary text-sm flex items-center justify-center gap-2"
+                >
+                  <Upload className="w-4 h-4" />
+                  {isUploading ? '上传中...' : '上传模型文件'}
+                </button>
+                <p className="text-xs text-gray-400">支持 IFC、RVT、DWG 格式</p>
+              </div>
             </div>
           </div>
         )}
@@ -281,10 +452,19 @@ export default function ModelCanvas() {
           />
         )}
 
+        {selectedCollision && (
+          <CollisionPanel
+            collision={selectedCollision}
+            onClose={() => setSelectedCollision(null)}
+            onCreateIssue={handleCreateIssueFromCollision}
+          />
+        )}
+
         <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg px-4 py-2 border border-gray-200 text-xs text-gray-500">
-          <p>提示：点击构件查看属性 | Alt+拖动平移视图</p>
+          <p>提示：点击构件查看属性 | 点击碰撞区域查看详情 | Alt+拖动平移视图</p>
         </div>
       </div>
     </div>
   );
 }
+
